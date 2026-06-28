@@ -1,0 +1,4 @@
+flask
+moviepy
+duckduckgo_search
+gunicorn
