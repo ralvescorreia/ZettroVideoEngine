@@ -1,5 +1,7 @@
 flask
-moviepy==1.0.3
-duckduckgo_search
 gunicorn
 requests
+moviepy==1.0.3
+Pillow==9.5.0
+imageio==2.25.1
+imageio-ffmpeg==0.4.8
