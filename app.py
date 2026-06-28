@@ -57,20 +57,28 @@ def generate_video():
     duration_per_slide = video_duration / len(urls)
     clips = []
 
+    # Cabeçalho para simular um navegador comum e evitar bloqueio de robôs no Render
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     for idx, url in enumerate(urls):
         try:
             img_name = f"img_{idx}.jpg"
-            img_data = requests.get(url, timeout=10).content
-            with open(img_name, 'wb') as handler:
-                handler.write(img_data)
-
-            # FORMA ULTRA RESILIENTE: Abre via Pillow, converte em matriz NumPy RGB e joga no ImageClip
-            # Isso ignora completamente o backend problemático do imageio
-            pil_img = Image.open(img_name).convert('RGB').resize((1080, 1920))
-            img_array = np.array(pil_img)
+            # Fazemos o download passando os headers simulados
+            response = requests.get(url, headers=headers, timeout=10)
             
-            clip = ImageClip(img_array).set_duration(duration_per_slide)
-            clips.append(clip)
+            if response.status_code == 200:
+                with open(img_name, 'wb') as handler:
+                    handler.write(response.content)
+
+                pil_img = Image.open(img_name).convert('RGB').resize((1080, 1920))
+                img_array = np.array(pil_img)
+                
+                clip = ImageClip(img_array).set_duration(duration_per_slide)
+                clips.append(clip)
+            else:
+                print(f"Erro HTTP {response.status_code} na imagem {idx}")
         except Exception as e:
             print(f"Erro ao processar imagem {idx} via PIL/NumPy: {e}")
             continue
