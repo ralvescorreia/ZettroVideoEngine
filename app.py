@@ -29,13 +29,13 @@ def generate_video():
 
         # 4. Comando FFmpeg: Lê a imagem em loop, junta o áudio e encoda em tempo real direto pro arquivo
         # Usamos ultrafast e bitrates baixos para a CPU do Render não sofrer
-        comando = [
+       comando = [
             'ffmpeg', '-y',
             '-loop', '1', '-i', img_path,
             '-i', audio_path,
-            '-c:v', 'libx264', '-tune', 'stillimage', '-preset', 'ultrafast',
+            '-c:v', 'mpeg4', '-q:v', '5',
             '-c:a', 'aac', '-b:a', '96k',
-            '-pix_fmt', 'yuv420p', '-shortest',
+            '-shortest',
             output_video_path
         ]
         
