@@ -1,8 +1,7 @@
 import os
 import random
-import re
 from flask import Flask, request, send_file, jsonify
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, vfx
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 import requests
 
 app = Flask(__name__)
@@ -40,20 +39,18 @@ def generate_video():
     
     audio_file.save(audio_path)
 
-    # Descobre o termo (ex: "toyota,corolla")
     search_term = extrair_termo_busca(roteiro_texto, termo_recebido)
 
     audio_clip = AudioFileClip(audio_path)
     video_duration = audio_clip.duration
 
-    # Geramos 5 URLs dinâmicas do Unsplash que usam a API de imagens deles sem bloqueio de IP
-    # Mudando o "sig" a cada imagem, forçamos o Unsplash a entregar fotos diferentes do carro
+    # O SEGREDO: Limitamos o tamanho da imagem direto na URL (&w=600&h=1066) para não estourar os 512MB de RAM do Render
     urls = [
-        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=1",
-        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=2",
-        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=3",
-        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=4",
-        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=5"
+        f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=1",
+        f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=2",
+        f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=3",
+        f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=4",
+        f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=5"
     ]
 
     duration_per_slide = video_duration / len(urls)
@@ -62,38 +59,31 @@ def generate_video():
     for idx, url in enumerate(urls):
         try:
             img_name = f"img_{idx}.jpg"
-            # Baixa a foto direto do repositório público do Unsplash
             img_data = requests.get(url, timeout=10).content
             with open(img_name, 'wb') as handler:
                 handler.write(img_data)
 
-            clip = ImageClip(img_name).set_duration(duration_per_slide).resize(height=1920)
-            if clip.w > 1080:
-                clip = clip.crop(x_center=clip.w/2, width=1080)
-            
-            if idx % 2 == 0:
-                clip = clip.fx(vfx.zoom, lambda t: 1 + 0.05 * (t / duration_per_slide))
-            else:
-                clip = clip.fx(vfx.zoom, lambda t: 1.05 - 0.05 * (t / duration_per_slide))
-
+            # Carrega a imagem já leve e removemos os efeitos pesados de movimento (zoom) para economizar CPU
+            clip = ImageClip(img_name).set_duration(duration_per_slide).resize(newsize=(1080, 1920))
             clips.append(clip)
         except Exception as e:
             print(f"Erro na imagem {idx}: {e}")
             continue
 
     if not clips:
-        return jsonify({"error": "Nenhum slide pôde ser gerado pelas URLs do Unsplash"}), 500
+        return jsonify({"error": "Nenhum slide pôde ser gerado"}), 500
 
+    # Processamento simplificado focado em baixa RAM
     final_video = concatenate_videoclips(clips, method="compose")
     final_video = final_video.set_audio(audio_clip)
 
     final_video.write_videofile(
         output_video_path, 
-        fps=24, 
+        fps=20, # Reduzido levemente de 24 para 20 fps para processar mais rápido
         codec="libx264", 
         audio_codec="aac",
-        bitrate="2500k",
-        threads=2,
+        bitrate="1500k",
+        threads=1, # Força rodar em thread única para não travar a CPU free do Render
         logger=None
     )
 
