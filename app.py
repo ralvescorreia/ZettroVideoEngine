@@ -2,7 +2,6 @@ import os
 import random
 import re
 from flask import Flask, request, send_file, jsonify
-from duckduckgo_search import DDGS
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, vfx
 import requests
 
@@ -17,59 +16,45 @@ def extrair_termo_busca(roteiro, termo_original):
     for marca in marcas:
         if marca in texto_min:
             if marca == 'corolla':
-                return "Toyota Corolla 2026"
-            return marca.capitalize()
+                return "toyota,corolla"
+            return marca
             
-    return "Sports Car 2026"
-
-def download_images(query, count=5):
-    image_urls = []
-    try:
-        with DDGS() as ddgs:
-            results = ddgs.images(query, max_results=15)
-            urls = [r['image'] for r in results if r['image'].startswith('http')]
-            random.shuffle(urls)
-            image_urls = urls[:count]
-    except Exception as e:
-        print(f"Erro na busca de imagens: {e}")
-    return image_urls
+    return "supercar"
 
 @app.route('/generate-video', methods=['POST'])
 def generate_video():
-    # Coleta os dados de forma resiliente se vier como Form, Multipart ou JSON
     roteiro_texto = request.form.get('roteiro', '')
     termo_recebido = request.form.get('search_term', '')
 
-    # Se mesmo assim vier vazio, tenta buscar do JSON caso o n8n force o cabeçalho
     if not roteiro_texto and request.is_json:
         data = request.get_json(silent=True) or {}
         roteiro_texto = data.get('roteiro', '')
         termo_recebido = data.get('search_term', '')
 
-    # Valida se o arquivo de áudio veio
     if 'audio_file' not in request.files:
-        return jsonify({"error": "Falta o arquivo de áudio binário (audio_file) na requisição"}), 400
+        return jsonify({"error": "Falta o arquivo de áudio binário (audio_file)"}), 400
         
     audio_file = request.files['audio_file']
     audio_path = "temp_audio.mp3"
     output_video_path = "output_zettro.mp4"
     
-    # Salva o arquivo enviado
     audio_file.save(audio_path)
 
-    # Descobre o termo de busca das imagens
+    # Descobre o termo (ex: "toyota,corolla")
     search_term = extrair_termo_busca(roteiro_texto, termo_recebido)
 
-    # Processamento do vídeo com MoviePy
     audio_clip = AudioFileClip(audio_path)
     video_duration = audio_clip.duration
 
-    urls = download_images(search_term, count=5)
-    if not urls:
-        urls = [
-            "https://images.unsplash.com/photo-1621259182978-f09e5e2b091e?w=1080",
-            "https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=1080"
-        ]
+    # Geramos 5 URLs dinâmicas do Unsplash que usam a API de imagens deles sem bloqueio de IP
+    # Mudando o "sig" a cada imagem, forçamos o Unsplash a entregar fotos diferentes do carro
+    urls = [
+        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=1",
+        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=2",
+        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=3",
+        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=4",
+        f"https://images.unsplash.com/featured/1080x1920/?{search_term}&sig=5"
+    ]
 
     duration_per_slide = video_duration / len(urls)
     clips = []
@@ -77,7 +62,8 @@ def generate_video():
     for idx, url in enumerate(urls):
         try:
             img_name = f"img_{idx}.jpg"
-            img_data = requests.get(url, timeout=5).content
+            # Baixa a foto direto do repositório público do Unsplash
+            img_data = requests.get(url, timeout=10).content
             with open(img_name, 'wb') as handler:
                 handler.write(img_data)
 
@@ -86,9 +72,9 @@ def generate_video():
                 clip = clip.crop(x_center=clip.w/2, width=1080)
             
             if idx % 2 == 0:
-                clip = clip.fx(vfx.zoom, lambda t: 1 + 0.04 * (t / duration_per_slide))
+                clip = clip.fx(vfx.zoom, lambda t: 1 + 0.05 * (t / duration_per_slide))
             else:
-                clip = clip.fx(vfx.zoom, lambda t: 1.04 - 0.04 * (t / duration_per_slide))
+                clip = clip.fx(vfx.zoom, lambda t: 1.05 - 0.05 * (t / duration_per_slide))
 
             clips.append(clip)
         except Exception as e:
@@ -96,7 +82,7 @@ def generate_video():
             continue
 
     if not clips:
-        return jsonify({"error": "Nenhum slide gerado"}), 500
+        return jsonify({"error": "Nenhum slide pôde ser gerado pelas URLs do Unsplash"}), 500
 
     final_video = concatenate_videoclips(clips, method="compose")
     final_video = final_video.set_audio(audio_clip)
