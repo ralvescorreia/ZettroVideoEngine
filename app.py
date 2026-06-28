@@ -1,10 +1,8 @@
 import os
-import random
 from flask import Flask, request, send_file, jsonify
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import ImageClip, AudioFileClip
 from PIL import Image
 import numpy as np
-import requests
 
 app = Flask(__name__)
 
@@ -12,10 +10,6 @@ app = Flask(__name__)
 def generate_video():
     roteiro_texto = request.form.get('roteiro', '')
     
-    if not roteiro_texto and request.is_json:
-        data = request.get_json(silent=True) or {}
-        roteiro_texto = data.get('roteiro', '')
-
     if 'audio_file' not in request.files:
         return jsonify({"error": "Falta o arquivo de áudio binário (audio_file)"}), 400
         
@@ -23,71 +17,43 @@ def generate_video():
     audio_path = "temp_audio.mp3"
     output_video_path = "output_zettro.mp4"
     
+    # Salva o áudio do n8n
     audio_file.save(audio_path)
 
+    # Carrega o áudio para saber a duração exata
     audio_clip = AudioFileClip(audio_path)
     video_duration = audio_clip.duration
 
-    # Usando o Picsum Photos com IDs aleatórios estáveis para garantir imagens reais verticais e sem erro 404!
-    urls = [
-        "https://picsum.photos/id/1071/1080/1920", # Foto de rodovia/carro
-        "https://picsum.photos/id/133/1080/1920",  # Carro clássico / estrada
-        "https://picsum.photos/id/54/1080/1920",   # Paisagem urbana moderna
-        "https://picsum.photos/id/76/1080/1920",   # Estrada/viagem
-        "https://picsum.photos/id/435/1080/1920"   # Cidade/infraestrutura
-    ]
+    try:
+        # Em vez de carregar várias fotos, criamos uma única imagem de fundo sólida e elegante (grafite escuro)
+        # Isso reduz o uso de RAM para quase zero e acelera o processamento no Render
+        pil_img = Image.new('RGB', (1080, 1920), color=(25, 25, 25))
+        img_array = np.array(pil_img)
+        
+        # Cria o clipe com a duração exata do áudio
+        video_clip = ImageClip(img_array).set_duration(video_duration)
+        video_clip = video_clip.set_audio(audio_clip)
 
-    duration_per_slide = video_duration / len(urls)
-    clips = []
+        # Renderiza com configurações ultra-rápidas (preset='ultrafast') para evitar o timeout do Render
+        video_clip.write_videofile(
+            output_video_path, 
+            fps=15, # Reduzido para fluidez básica
+            codec="libx264", 
+            audio_codec="aac",
+            bitrate="800k", # Bitrate mais leve
+            preset="ultrafast", # O segredo para renderizar em segundos
+            threads=1,
+            logger=None
+        )
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+        audio_clip.close()
+        video_clip.close()
 
-    for idx, url in enumerate(urls):
-        try:
-            img_name = f"img_{idx}.jpg"
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                with open(img_name, 'wb') as handler:
-                    handler.write(response.content)
+        return send_file(output_video_path, mimetype='video/mp4')
 
-                pil_img = Image.open(img_name).convert('RGB')
-                img_array = np.array(pil_img)
-                
-                clip = ImageClip(img_array).set_duration(duration_per_slide)
-                clips.append(clip)
-            else:
-                print(f"Aviso: Erro HTTP {response.status_code} na imagem {idx}. Usando fallback.")
-                raise Exception("Fallback")
-        except Exception:
-            # SE TUDO FALHAR: Cria uma imagem sólida escura (Preto/Grafite elegante) para o vídeo nunca quebrar!
-            pil_img = Image.new('RGB', (1080, 1920), color=(20, 20, 20))
-            img_array = np.array(pil_img)
-            clip = ImageClip(img_array).set_duration(duration_per_slide)
-            clips.append(clip)
-
-    if not clips:
-        return jsonify({"error": "Nenhum slide pôde ser gerado"}), 500
-
-    final_video = concatenate_videoclips(clips, method="compose")
-    final_video = final_video.set_audio(audio_clip)
-
-    final_video.write_videofile(
-        output_video_path, 
-        fps=20, 
-        codec="libx264", 
-        audio_codec="aac",
-        bitrate="1500k",
-        threads=1, 
-        logger=None
-    )
-
-    audio_clip.close()
-    final_video.close()
-
-    return send_file(output_video_path, mimetype='video/mp4')
+    except Exception as e:
+        print(f"Erro na renderização rápida: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
