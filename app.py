@@ -2,6 +2,8 @@ import os
 import random
 from flask import Flask, request, send_file, jsonify
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+from PIL import Image
+import numpy as np
 import requests
 
 app = Flask(__name__)
@@ -44,7 +46,6 @@ def generate_video():
     audio_clip = AudioFileClip(audio_path)
     video_duration = audio_clip.duration
 
-    # O SEGREDO: Limitamos o tamanho da imagem direto na URL (&w=600&h=1066) para não estourar os 512MB de RAM do Render
     urls = [
         f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=1",
         f"https://images.unsplash.com/featured/?{search_term}&w=600&h=1066&fit=crop&sig=2",
@@ -63,27 +64,30 @@ def generate_video():
             with open(img_name, 'wb') as handler:
                 handler.write(img_data)
 
-            # Carrega a imagem já leve e removemos os efeitos pesados de movimento (zoom) para economizar CPU
-            clip = ImageClip(img_name).set_duration(duration_per_slide).resize(newsize=(1080, 1920))
+            # FORMA ULTRA RESILIENTE: Abre via Pillow, converte em matriz NumPy RGB e joga no ImageClip
+            # Isso ignora completamente o backend problemático do imageio
+            pil_img = Image.open(img_name).convert('RGB').resize((1080, 1920))
+            img_array = np.array(pil_img)
+            
+            clip = ImageClip(img_array).set_duration(duration_per_slide)
             clips.append(clip)
         except Exception as e:
-            print(f"Erro na imagem {idx}: {e}")
+            print(f"Erro ao processar imagem {idx} via PIL/NumPy: {e}")
             continue
 
     if not clips:
         return jsonify({"error": "Nenhum slide pôde ser gerado"}), 500
 
-    # Processamento simplificado focado em baixa RAM
     final_video = concatenate_videoclips(clips, method="compose")
     final_video = final_video.set_audio(audio_clip)
 
     final_video.write_videofile(
         output_video_path, 
-        fps=20, # Reduzido levemente de 24 para 20 fps para processar mais rápido
+        fps=20, 
         codec="libx264", 
         audio_codec="aac",
         bitrate="1500k",
-        threads=1, # Força rodar em thread única para não travar a CPU free do Render
+        threads=1, 
         logger=None
     )
 
