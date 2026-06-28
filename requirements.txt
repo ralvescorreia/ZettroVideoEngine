@@ -1,4 +1,5 @@
 flask
-moviepy
+moviepy==1.0.3
 duckduckgo_search
 gunicorn
+requests
