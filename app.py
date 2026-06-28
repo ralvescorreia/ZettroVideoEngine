@@ -1,35 +1,38 @@
 import os
 import subprocess
-from flask import Flask, request, send_file, jsonify
-from PIL import Image
+from flask import Flask, request, jsonify, send_file
 
 app = Flask(__name__)
 
 @app.route('/generate-video', methods=['POST'])
 def generate_video():
-    if 'audio_file' not in request.files:
-        return jsonify({"error": "Falta o arquivo de áudio binário (audio_file)"}), 400
-        
-    audio_file = request.files['audio_file']
-    audio_path = "temp_audio.mp3"
+    # 1. Limpeza de arquivos de execuções anteriores para não lotar o disco
+    audio_path = "input_audio.mp3"
+    img_path = "fundo_grafite.png"
     output_video_path = "output_zettro.mp4"
-    img_path = "temp_background.jpg"
     
-    # 1. Salva o áudio
+    for arquivo in [audio_path, output_video_path]:
+        if os.path.exists(arquivo):
+            try:
+                os.remove(arquivo)
+            except Exception as e:
+                print(f"Erro ao remover arquivo antigo {arquivo}: {e}")
+
+    # 2. Receber o arquivo de áudio vindo do n8n (ElevenLabs)
+    if 'file' not in request.files:
+        return jsonify({"error": "Nenhum arquivo de audio enviado no campo 'file'"}), 400
+    
+    audio_file = request.files['file']
     audio_file.save(audio_path)
 
-    try:
-        # 2. Cria uma imagem sólida leve em disco (600x1066 para ficar bem leve)
-        pil_img = Image.new('RGB', (600, 1066), color=(25, 25, 25))
-        pil_img.save(img_path, "JPEG", quality=80)
-        
-        # 3. Remove arquivos antigos se existirem para não travar o FFmpeg
-        if os.path.exists(output_video_path):
-            os.remove(output_video_path)
+    # 3. Validar se a imagem de fundo existe no repositório
+    if not os.path.exists(img_path):
+        return jsonify({"error": f"A imagem de fundo '{img_path}' nao foi encontrada no servidor."}), 500
 
-        # 4. Comando FFmpeg: Lê a imagem em loop, junta o áudio e encoda em tempo real direto pro arquivo
-        # Usamos ultrafast e bitrates baixos para a CPU do Render não sofrer
-       comando = [
+    try:
+        # 4. Comando FFmpeg Ultra-Light (MPEG4 + compressão inteligente)
+        # Evita estourar o timeout e processa o Reels em poucos segundos
+        comando = [
             'ffmpeg', '-y',
             '-loop', '1', '-i', img_path,
             '-i', audio_path,
@@ -38,22 +41,34 @@ def generate_video():
             '-shortest',
             output_video_path
         ]
-        
-        # Executa o processo no sistema operacional
+
+        print("Iniciando renderizacao do video com FFmpeg...")
         subprocess.run(comando, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("Video gerado com sucesso!")
 
-        # Limpeza de temporários
-        if os.path.exists(audio_path): os.remove(audio_path)
-        if os.path.exists(img_path): os.remove(img_path)
-
+        # Retorna o arquivo binário diretamente para o n8n registrar o nó com sucesso
         return send_file(output_video_path, mimetype='video/mp4')
 
     except subprocess.CalledProcessError as e:
-        print(f"Erro crítico no FFmpeg: {e}")
-        return jsonify({"error": "Falha na execução do FFmpeg de sistema"}), 500
+        print(f"Erro no FFmpeg: {e}")
+        return jsonify({"error": "Falha ao processar o video com o FFmpeg"}), 500
     except Exception as e:
-        print(f"Erro geral: {e}")
+        print(f"Erro interno: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/download-video', methods=['GET'])
+def download_video():
+    """
+    Rota publica para o Instagram (via Make) baixar o video 
+    diretamente do servidor da ZETTRO de forma automatica.
+    """
+    output_video_path = "output_zettro.mp4"
+    if os.path.exists(output_video_path):
+        return send_file(output_video_path, mimetype='video/mp4')
+    else:
+        return jsonify({"error": "Video final ainda nao foi gerado ou nao foi encontrado"}), 404
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # Porta padrão exigida pelo Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
